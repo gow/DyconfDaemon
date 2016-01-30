@@ -2,35 +2,23 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 )
 
 func main() {
+	logger := log.New(os.Stdout, "[DyconfDaemon]: ", log.Lshortfile)
 	fileName := getConfigFilePath()
-	if _, err := os.Stat(fileName); os.IsNotExist(err) {
-		log.Printf("[INFO]: [%s] doesn't exist. Going to create a new one.", fileName)
+	d := &daemon{}
+	if err := d.start(logger, fileName, "localhost", "9009"); err != nil {
+		logger.Fatal(err)
 	}
-
-	fmt.Println(fileName)
+	logger.Println("Daemon successfully started")
 }
 
 func getConfigFilePath() string {
 	var fileName string
 	flag.StringVar(&fileName, "file", "", "The full file path of the config file.")
 	flag.Parse()
-	if fileName == "" {
-		log.Fatal("Invalid config file. File path cannot be empty.")
-	}
-	if !filepath.IsAbs(fileName) {
-		log.Fatalf("Invalid config file: [%s]. File path must be absolute path.", fileName)
-	}
-	dir := filepath.Dir(fileName)
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		log.Fatalf("Invalid config file: [%s]. The enclosing directory [%s] does not exit.", fileName, dir)
-	}
-
 	return fileName
 }

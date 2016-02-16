@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -42,7 +43,7 @@ func (d *daemon) start(logger *log.Logger, fileName string, host string, port st
 	}
 	d.log.Println("Existing map: ", spew.Sdump(d.cm.Map()))
 	d.log.Println("Starting the daemon...")
-	http.Handle("/", d)
+	http.HandleFunc("/config/", d.configServer)
 	d.log.Fatal(
 		"Failed to start the daemon.",
 		http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), nil),
@@ -54,20 +55,75 @@ func (d *daemon) stop() error {
 	return d.cm.Close()
 }
 
-func (d *daemon) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (d *daemon) configServer(w http.ResponseWriter, req *http.Request) {
+	if req.URL.EscapedPath() != "/config/" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 	switch req.Method {
 	case "PUT":
-		d.handlePut(w, req)
+		d.putConfig(w, req)
 	case "GET":
-		d.handleGet(w, req)
+		d.getConfig(w, req)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
-func (d *daemon) handlePut(w http.ResponseWriter, req *http.Request) {
+func (d *daemon) putConfig(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
-func (d *daemon) handleGet(w http.ResponseWriter, req *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
+func (d *daemon) getConfig(w http.ResponseWriter, req *http.Request) {
+	keys := req.URL.Query()["key"]
+	d.log.Print(keys)
+	resp := json.NewEncoder(w)
+	m, err := d.cm.Map()
+	if err != nil {
+		resp.Encode(err)
+	}
+
+	type kvpair struct {
+		Key string `json:"key"`
+		Val []byte `json:"value"`
+		Err string `json:"error"`
+	}
+	var kvPairs []kvpair
+	for _, key := range keys {
+		pair := kvpair{Key: key}
+		val, ok := m[key]
+		if !ok {
+			pair.Err = "Not Found"
+		} else {
+			pair.Val = val
+		}
+		kvPairs = append(kvPairs, pair)
+	}
+	w.WriteHeader(http.StatusOK)
+	resp.Encode(kvPairs)
 }
+
+/*
+type apiHandler interface {
+	handleGet(w http.ResponseWriter, req *http.Request)
+	handlePut(w http.ResponseWriter, req *http.Request)
+	handlePost(w http.ResponseWriter, req *http.Request)
+	handleDelete(w http.ResponseWriter, req *http.Request)
+}
+
+type api struct {
+	h apiHandler
+}
+
+func (a *api) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case "GET":
+		a.h.handleGet(w, req)
+	case "PUT":
+		a.h.handlePut(w, req)
+	case "POST":
+		a.h.handlePost(w, req)
+	case "DELETE":
+		a.h.handleDelete(w, req)
+	}
+}
+*/

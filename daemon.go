@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/gow/dyconf"
 )
 
@@ -41,7 +40,6 @@ func (d *daemon) start(logger *log.Logger, fileName string, host string, port st
 	if err != nil {
 		return err
 	}
-	d.log.Println("Existing map: ", spew.Sdump(d.cm.Map()))
 	d.log.Println("Starting the daemon...")
 	http.HandleFunc("/config/", d.configServer)
 	d.log.Fatal(
@@ -71,11 +69,25 @@ func (d *daemon) configServer(w http.ResponseWriter, req *http.Request) {
 }
 
 func (d *daemon) putConfig(w http.ResponseWriter, req *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
+
+	resp := json.NewEncoder(w)
+	key := req.FormValue("key")
+	if key == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		resp.Encode(struct{ Error string }{"Invalid Key"})
+		return
+	}
+	val := req.FormValue("value")
+
+	if err := d.cm.Set(key, []byte(val)); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		resp.Encode(err)
+	}
+	w.WriteHeader(http.StatusOK)
 }
+
 func (d *daemon) getConfig(w http.ResponseWriter, req *http.Request) {
 	keys := req.URL.Query()["key"]
-	d.log.Print(keys)
 	resp := json.NewEncoder(w)
 	m, err := d.cm.Map()
 	if err != nil {
@@ -85,7 +97,7 @@ func (d *daemon) getConfig(w http.ResponseWriter, req *http.Request) {
 	type kvpair struct {
 		Key string `json:"key"`
 		Val []byte `json:"value"`
-		Err string `json:"error"`
+		Err string `json:"error",omitempty`
 	}
 	var kvPairs []kvpair
 	for _, key := range keys {
@@ -101,29 +113,3 @@ func (d *daemon) getConfig(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	resp.Encode(kvPairs)
 }
-
-/*
-type apiHandler interface {
-	handleGet(w http.ResponseWriter, req *http.Request)
-	handlePut(w http.ResponseWriter, req *http.Request)
-	handlePost(w http.ResponseWriter, req *http.Request)
-	handleDelete(w http.ResponseWriter, req *http.Request)
-}
-
-type api struct {
-	h apiHandler
-}
-
-func (a *api) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	switch req.Method {
-	case "GET":
-		a.h.handleGet(w, req)
-	case "PUT":
-		a.h.handlePut(w, req)
-	case "POST":
-		a.h.handlePost(w, req)
-	case "DELETE":
-		a.h.handleDelete(w, req)
-	}
-}
-*/

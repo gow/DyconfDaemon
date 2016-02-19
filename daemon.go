@@ -69,7 +69,6 @@ func (d *daemon) configServer(w http.ResponseWriter, req *http.Request) {
 }
 
 func (d *daemon) putConfig(w http.ResponseWriter, req *http.Request) {
-
 	resp := json.NewEncoder(w)
 	key := req.FormValue("key")
 	if key == "" {
@@ -79,6 +78,9 @@ func (d *daemon) putConfig(w http.ResponseWriter, req *http.Request) {
 	}
 	val := req.FormValue("value")
 
+	if _, err := d.cm.Get(key); err == nil {
+		resp.Encode(struct{ Error string }{"key already exists. Use a POST request to modify it"})
+	}
 	if err := d.cm.Set(key, []byte(val)); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		resp.Encode(err)
@@ -89,10 +91,6 @@ func (d *daemon) putConfig(w http.ResponseWriter, req *http.Request) {
 func (d *daemon) getConfig(w http.ResponseWriter, req *http.Request) {
 	keys := req.URL.Query()["key"]
 	resp := json.NewEncoder(w)
-	m, err := d.cm.Map()
-	if err != nil {
-		resp.Encode(err)
-	}
 
 	type kvpair struct {
 		Key string `json:"key"`
@@ -102,9 +100,9 @@ func (d *daemon) getConfig(w http.ResponseWriter, req *http.Request) {
 	var kvPairs []kvpair
 	for _, key := range keys {
 		pair := kvpair{Key: key}
-		val, ok := m[key]
-		if !ok {
-			pair.Err = "Not Found"
+		val, err := d.cm.Get(key)
+		if err != nil {
+			pair.Err = err.Error()
 		} else {
 			pair.Val = val
 		}

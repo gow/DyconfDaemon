@@ -42,6 +42,7 @@ func (d *daemon) start(logger *log.Logger, fileName string, host string, port st
 	}
 	d.log.Println("Starting the daemon...")
 	http.HandleFunc("/config/", d.configServer)
+	http.HandleFunc("/config/getall/", d.getAllConfig)
 	d.log.Fatal(
 		"Failed to start the daemon.",
 		http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), nil),
@@ -63,6 +64,10 @@ func (d *daemon) configServer(w http.ResponseWriter, req *http.Request) {
 		d.putConfig(w, req)
 	case "GET":
 		d.getConfig(w, req)
+	case "POST":
+		d.postConfig(w, req)
+	case "DELETE":
+		d.deleteConfig(w, req)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
@@ -80,12 +85,15 @@ func (d *daemon) putConfig(w http.ResponseWriter, req *http.Request) {
 
 	if _, err := d.cm.Get(key); err == nil {
 		resp.Encode(struct{ Error string }{"key already exists. Use a POST request to modify it"})
+		return
 	}
 	if err := d.cm.Set(key, []byte(val)); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		resp.Encode(err)
+		return
 	}
 	w.WriteHeader(http.StatusOK)
+	resp.Encode(true)
 }
 
 func (d *daemon) getConfig(w http.ResponseWriter, req *http.Request) {
@@ -110,4 +118,70 @@ func (d *daemon) getConfig(w http.ResponseWriter, req *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	resp.Encode(kvPairs)
+}
+
+func (d *daemon) getAllConfig(w http.ResponseWriter, req *http.Request) {
+	if req.URL.EscapedPath() != "/config/getall/" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if req.Method != "GET" {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	all, err := d.cm.Map()
+	resp := json.NewEncoder(w)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		resp.Encode(err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	resp.Encode(all)
+
+}
+func (d *daemon) postConfig(w http.ResponseWriter, req *http.Request) {
+	resp := json.NewEncoder(w)
+	key := req.FormValue("key")
+	if key == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		resp.Encode(struct{ Error string }{"Invalid Key"})
+		return
+	}
+	val := req.FormValue("value")
+
+	if _, err := d.cm.Get(key); err != nil {
+		resp.Encode(struct{ Error string }{"key doesn't exists. Use a PUT request to add it."})
+		return
+	}
+	if err := d.cm.Set(key, []byte(val)); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		resp.Encode(err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	resp.Encode(true)
+}
+
+func (d *daemon) deleteConfig(w http.ResponseWriter, req *http.Request) {
+	resp := json.NewEncoder(w)
+	key := req.FormValue("key")
+	if key == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		resp.Encode(struct{ Error string }{"Invalid Key"})
+		return
+	}
+
+	if _, err := d.cm.Get(key); err != nil {
+		resp.Encode(struct{ Error string }{"key doesn't exists."})
+		return
+	}
+
+	if err := d.cm.Delete(key); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		resp.Encode(err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	resp.Encode(true)
 }

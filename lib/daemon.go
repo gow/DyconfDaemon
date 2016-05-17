@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -96,7 +97,7 @@ func (d *daemon) validateFile() error {
 
 func (d *daemon) Start() error {
 	d.log.Println("Starting the daemon...")
-	//http.HandleFunc("/config/", d.configServer)
+	http.HandleFunc("/config/", d.configAPI())
 	//http.HandleFunc("/config/getall/", d.getAllConfig)
 
 	d.log.Fatal(
@@ -104,4 +105,134 @@ func (d *daemon) Start() error {
 		http.ListenAndServe(fmt.Sprintf("%s:%s", d.host, d.port), nil),
 	)
 	return nil
+}
+
+// configAPI returns the API handler.
+func (d *daemon) configAPI() http.HandlerFunc {
+	return API(&configAPI{dmn: d})
+}
+
+type api interface {
+	GET(http.ResponseWriter, *http.Request)
+	PUT(http.ResponseWriter, *http.Request)
+	POST(http.ResponseWriter, *http.Request)
+	DELETE(http.ResponseWriter, *http.Request)
+}
+
+type configAPI struct {
+	dmn *daemon
+}
+
+func (c *configAPI) GET(w http.ResponseWriter, req *http.Request) {
+	keys := req.URL.Query()["key"]
+	resp := json.NewEncoder(w)
+	type kvPair struct {
+		Key   string `json:"key"`
+		Value []byte `json:"value"`
+		Err   string `json:"error,omitempty"`
+	}
+	var kvp []kvPair
+	for _, key := range keys {
+		pair := kvPair{Key: key}
+		val, err := c.dmn.confManager.Get(key)
+		if err != nil {
+			pair.Err = err.Error()
+		} else {
+			pair.Value = val
+		}
+		kvp = append(kvp, pair)
+	}
+
+	w.WriteHeader(http.StatusOK)
+	resp.Encode(kvp)
+}
+
+func (c *configAPI) PUT(w http.ResponseWriter, req *http.Request) {
+	resp := json.NewEncoder(w)
+	key := req.FormValue("key")
+	if key == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		resp.Encode(struct{ Error string }{"Invalid Key"})
+		return
+	}
+	if _, err := c.dmn.confManager.Get(key); err == nil {
+		resp.Encode(struct{ Error string }{"key already exists. Use a POST request to modify it"})
+		return
+	}
+
+	val := req.FormValue("value")
+	if err := c.dmn.confManager.Set(key, []byte(val)); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		resp.Encode(err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	resp.Encode(true)
+}
+
+func (c *configAPI) DELETE(w http.ResponseWriter, req *http.Request) {
+	resp := json.NewEncoder(w)
+	key := req.FormValue("key")
+	if key == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		resp.Encode(struct{ Error string }{"Invalid Key"})
+		return
+	}
+
+	if _, err := c.dmn.confManager.Get(key); err != nil {
+		resp.Encode(struct{ Error string }{"key doesn't exists."})
+		return
+	}
+
+	if err := c.dmn.confManager.Delete(key); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		resp.Encode(err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	resp.Encode(true)
+}
+
+func (c *configAPI) POST(w http.ResponseWriter, req *http.Request) {
+	resp := json.NewEncoder(w)
+	key := req.FormValue("key")
+	if key == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		resp.Encode(struct{ Error string }{"Invalid Key"})
+		return
+	}
+
+	if _, err := c.dmn.confManager.Get(key); err != nil {
+		resp.Encode(struct{ Error string }{"key doesn't exists. Use PUT to add a new key."})
+		return
+	}
+
+	val := req.FormValue("value")
+	if err := c.dmn.confManager.Set(key, []byte(val)); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		resp.Encode(err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	resp.Encode(true)
+}
+
+func API(a api) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		switch req.Method {
+		case "PUT":
+			a.PUT(w, req)
+		case "GET":
+			a.GET(w, req)
+		case "POST":
+			a.POST(w, req)
+		case "DELETE":
+			a.DELETE(w, req)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}
 }

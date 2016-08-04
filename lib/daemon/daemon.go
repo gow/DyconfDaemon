@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/facebookgo/stackerr"
+	"github.com/gow/DyconfDaemon/lib/api"
 	"github.com/gow/dyconf"
 )
 
@@ -97,7 +98,8 @@ func (d *daemon) validateFile() error {
 
 func (d *daemon) Start() error {
 	d.log.Println("Starting the daemon...")
-	http.HandleFunc("/config/", d.configAPI())
+	config := &configAPI{dmn: d}
+	http.HandleFunc(config.Path(), api.API(config, d.log))
 	//http.HandleFunc("/config/getall/", d.getAllConfig)
 
 	d.log.Fatal(
@@ -109,23 +111,24 @@ func (d *daemon) Start() error {
 
 // configAPI returns the API handler.
 func (d *daemon) configAPI() http.HandlerFunc {
-	return API(&configAPI{dmn: d})
-}
-
-type api interface {
-	GET(http.ResponseWriter, *http.Request)
-	PUT(http.ResponseWriter, *http.Request)
-	POST(http.ResponseWriter, *http.Request)
-	DELETE(http.ResponseWriter, *http.Request)
+	return api.API(&configAPI{dmn: d}, d.log)
 }
 
 type configAPI struct {
 	dmn *daemon
 }
 
-func (c *configAPI) GET(w http.ResponseWriter, req *http.Request) {
-	keys := req.URL.Query()["key"]
+func (c *configAPI) Path() string {
+	return "/config/"
+}
+
+func (c *configAPI) GET(w http.ResponseWriter, req *http.Request) error {
 	resp := json.NewEncoder(w)
+	keys := req.URL.Query()["key"]
+	if len(keys) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return stackerr.Wrap(resp.Encode(struct{ Error string }{"Invalid Key"}))
+	}
 	type kvPair struct {
 		Key   string `json:"key"`
 		Value []byte `json:"value"`
@@ -144,95 +147,71 @@ func (c *configAPI) GET(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	resp.Encode(kvp)
+	return stackerr.Wrap(resp.Encode(kvp))
 }
 
-func (c *configAPI) PUT(w http.ResponseWriter, req *http.Request) {
+func (c *configAPI) PUT(w http.ResponseWriter, req *http.Request) error {
 	resp := json.NewEncoder(w)
 	key := req.FormValue("key")
 	if key == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		resp.Encode(struct{ Error string }{"Invalid Key"})
-		return
+		return stackerr.Wrap(resp.Encode(struct{ Error string }{"Invalid Key"}))
 	}
 	if _, err := c.dmn.confManager.Get(key); err == nil {
-		resp.Encode(struct{ Error string }{"key already exists. Use a POST request to modify it"})
-		return
+		return stackerr.Wrap(
+			resp.Encode(struct{ Error string }{"key already exists. Use a POST request to modify it"}),
+		)
 	}
 
 	val := req.FormValue("value")
 	if err := c.dmn.confManager.Set(key, []byte(val)); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		resp.Encode(err)
-		return
+		return stackerr.Wrap(resp.Encode(err))
 	}
 
 	w.WriteHeader(http.StatusOK)
-	resp.Encode(true)
+	return stackerr.Wrap(resp.Encode(true))
 }
 
-func (c *configAPI) DELETE(w http.ResponseWriter, req *http.Request) {
+func (c *configAPI) DELETE(w http.ResponseWriter, req *http.Request) error {
 	resp := json.NewEncoder(w)
 	key := req.FormValue("key")
 	if key == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		resp.Encode(struct{ Error string }{"Invalid Key"})
-		return
+		return stackerr.Wrap(resp.Encode(struct{ Error string }{"Invalid Key"}))
 	}
 
 	if _, err := c.dmn.confManager.Get(key); err != nil {
-		resp.Encode(struct{ Error string }{"key doesn't exists."})
-		return
+		return stackerr.Wrap(resp.Encode(struct{ Error string }{"key doesn't exists."}))
 	}
 
 	if err := c.dmn.confManager.Delete(key); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		resp.Encode(err)
-		return
+		return stackerr.Wrap(resp.Encode(err))
 	}
 
 	w.WriteHeader(http.StatusOK)
-	resp.Encode(true)
+	return stackerr.Wrap(resp.Encode(true))
 }
 
-func (c *configAPI) POST(w http.ResponseWriter, req *http.Request) {
+func (c *configAPI) POST(w http.ResponseWriter, req *http.Request) error {
 	resp := json.NewEncoder(w)
 	key := req.FormValue("key")
 	if key == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		resp.Encode(struct{ Error string }{"Invalid Key"})
-		return
+		return stackerr.Wrap(resp.Encode(struct{ Error string }{"Invalid Key"}))
 	}
 
 	if _, err := c.dmn.confManager.Get(key); err != nil {
-		resp.Encode(struct{ Error string }{"key doesn't exists. Use PUT to add a new key."})
-		return
+		return stackerr.Wrap(resp.Encode(struct{ Error string }{"key doesn't exists. Use PUT to add a new key."}))
 	}
 
 	val := req.FormValue("value")
 	if err := c.dmn.confManager.Set(key, []byte(val)); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		resp.Encode(err)
-		return
+		return stackerr.Wrap(resp.Encode(err))
 	}
 
 	w.WriteHeader(http.StatusOK)
-	resp.Encode(true)
-}
-
-func API(a api) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		switch req.Method {
-		case "PUT":
-			a.PUT(w, req)
-		case "GET":
-			a.GET(w, req)
-		case "POST":
-			a.POST(w, req)
-		case "DELETE":
-			a.DELETE(w, req)
-		default:
-			w.WriteHeader(http.StatusMethodNotAllowed)
-		}
-	}
+	return stackerr.Wrap(resp.Encode(true))
 }

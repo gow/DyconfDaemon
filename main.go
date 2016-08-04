@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/gow/DyconfDaemon/lib"
+	"github.com/gow/DyconfDaemon/lib/daemon"
 )
 
 func main() {
